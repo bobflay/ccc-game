@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Cacao Traçabilité — SNT Côte d'Ivoire</title>
+    <link rel="stylesheet" href="game.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "./three.module.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="game-root"></div>
+
+    <!-- INTERFACE (HUD) -->
+    <div id="hud">
+        <!-- Barre du haut : ressources -->
+        <div class="top-bar">
+            <div class="resource"><span class="res-icon">🍫</span><span class="res-value" id="cacaoValue">0</span><span class="res-label">kg cacao</span></div>
+            <div class="resource"><span class="res-icon">💳</span><span class="res-value" id="cardValue">0</span><span class="res-label">Carte</span></div>
+            <div class="resource"><span class="res-icon">💵</span><span class="res-value" id="moneyValue">0</span><span class="res-label">Espèces</span></div>
+            <div class="resource"><span class="res-icon">🧺</span><span class="res-value" id="depotValue">0</span><span class="res-label">Dépôt coop</span></div>
+            <div class="resource"><span class="res-icon">🚚</span><span class="res-value" id="shipValue">0</span><span class="res-label">Expédiés</span></div>
+            <div class="resource"><span class="res-icon">🛡️</span><span class="res-value" id="scoreValue">0</span><span class="res-label">Traçabilité</span></div>
+        </div>
+
+        <!-- Bannière d'objectif guidé -->
+        <div class="objective" id="objective">
+            <div class="objective-step" id="objectiveStep">Étape 1 / 4</div>
+            <div class="objective-text" id="objectiveText">Géolocalise ta parcelle</div>
+            <div class="objective-progress" id="objectiveProgress"></div>
+        </div>
+
+        <!-- Joystick virtuel -->
+        <div id="joystick" class="joystick">
+            <div id="joystickKnob" class="joystick-knob"></div>
+        </div>
+
+        <!-- Carte du Producteur (apparaît après enregistrement) -->
+        <div id="producerCard" class="producer-card hidden">
+            <div class="pc-top">
+                <span class="pc-flag">🇨🇮</span>
+                <span class="pc-title">CARTE DU PRODUCTEUR</span>
+            </div>
+            <div class="pc-body">
+                <div class="pc-info">
+                    <div class="pc-name" id="pcName">—</div>
+                    <div class="pc-line" id="pcZone">—</div>
+                    <div class="pc-line pc-mat" id="pcMat">—</div>
+                </div>
+                <canvas id="pcQR" width="64" height="64"></canvas>
+            </div>
+            <div class="pc-foot">Conseil du Café-Cacao · SNT</div>
+        </div>
+
+        <div class="hint">Déplace-toi : joystick ou WASD / flèches • Caméra : glisse la main sur l'écran • Récolte et stations : automatiques</div>
+    </div>
+
+    <!-- Panneau de vente tracée -->
+    <div id="salePanel" class="sale-panel hidden">
+        <h3>🤝 Vente tracée — Coopérative</h3>
+        <ul id="saleSteps">
+            <li data-k="scan">Scan de la Carte du Producteur (TPE)</li>
+            <li data-k="weigh">Pesée des sacs de jute</li>
+            <li data-k="seal">Pose des scellés numérotés</li>
+            <li data-k="price">Calcul au prix bord-champ officiel</li>
+            <li data-k="pay">Paiement sécurisé sur la Carte</li>
+            <li data-k="sms">Reçu SMS + connaissement généré</li>
+        </ul>
+        <div id="saleResult" class="sale-result"></div>
+    </div>
+
+    <!-- Fiche d'information pédagogique -->
+    <div id="infoModal" class="modal hidden">
+        <div class="modal-card">
+            <div class="modal-emoji" id="modalEmoji">📍</div>
+            <h2 id="modalTitle">Titre</h2>
+            <p id="modalText">Texte</p>
+            <button id="modalBtn">Compris ✓</button>
+        </div>
+    </div>
+
+    <!-- Écran de démarrage -->
+    <div id="startScreen">
+        <div class="start-card">
+            <h1>🍫 Cacao Traçabilité</h1>
+            <p class="subtitle">Système National de Traçabilité — Conseil du Café-Cacao 🇨🇮</p>
+            <p>Géolocalise ta parcelle, obtiens ta <strong>Carte du Producteur</strong>, récolte le cacao, vends-le en <strong>vente tracée</strong> à la <strong>Coopérative</strong> et encaisse ton Mobile Money au <strong>PUSH POS</strong>.</p>
+            <button id="startBtn">▶ Commencer</button>
+        </div>
+    </div>
+
+    <script type="module" src="game.js"></script>
+</body>
+</html>

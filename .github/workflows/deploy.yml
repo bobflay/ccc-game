@@ -1,0 +1,52 @@
+name: Deploy to GitHub Pages
+
+# Publishes the static site (game at /, dashboard at /dashboard.html) to GitHub Pages.
+# Split into build + deploy jobs (the official pattern) so re-running the deploy
+# never re-uploads the artifact — avoids the "multiple github-pages artifacts" error.
+on:
+  push:
+    branches:
+      - main
+      # Allows deploying from this working branch before it's merged.
+      # Safe to remove once everything lives on main.
+      - claude/repo-contents-overview-lwbe1p
+  workflow_dispatch:
+
+# Permissions required by the GitHub Pages deploy actions.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; don't cancel an in-progress one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  # 1) Build: package the repository root into a Pages artifact.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload site artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: "."
+
+  # 2) Deploy: publish the artifact produced by the build job.
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

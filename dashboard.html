@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tableau de Bord Performance Supply Chain</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="dashboard">
+        <!-- EN-TÊTE -->
+        <header class="header">
+            <h1>Tableau de Bord Performance Supply Chain</h1>
+            <div class="header-controls">
+                <div class="date-range-selector" role="group" aria-label="Sélection de la période">
+                    <button data-days="7" class="active">7 Derniers Jours</button>
+                    <button data-days="30">30 Derniers Jours</button>
+                    <button data-days="90">90 Derniers Jours</button>
+                </div>
+            </div>
+        </header>
+
+        <!-- FILTRES -->
+        <section class="filters" aria-label="Filtres de données">
+            <div class="filter-group">
+                <label for="categoryFilter">Catégorie de Produit</label>
+                <select id="categoryFilter">
+                    <option value="all">Toutes les Catégories</option>
+                </select>
+            </div>
+            <div class="filter-group">
+                <label for="supplierFilter">Fournisseur</label>
+                <select id="supplierFilter">
+                    <option value="all">Tous les Fournisseurs</option>
+                </select>
+            </div>
+            <div class="toggle-group">
+                <label class="toggle">
+                    <input type="checkbox" id="negativeVarianceToggle">
+                    <span class="toggle-slider"></span>
+                </label>
+                <span class="toggle-label">Afficher uniquement les écarts négatifs</span>
+            </div>
+        </section>
+
+        <!-- CARTES KPI -->
+        <section class="kpi-grid" aria-label="Indicateurs clés de performance">
+            <div class="kpi-card" id="kpi-forecast">
+                <div class="kpi-label">Prévisions Totales</div>
+                <div class="kpi-value">0 €</div>
+                <div class="kpi-subtext">Unités prévues</div>
+            </div>
+            <div class="kpi-card" id="kpi-actual">
+                <div class="kpi-label">Réalisé Total</div>
+                <div class="kpi-value">0 €</div>
+                <div class="kpi-subtext">Unités vendues</div>
+            </div>
+            <div class="kpi-card" id="kpi-accuracy">
+                <div class="kpi-label">Précision des Prévisions</div>
+                <div class="kpi-value">0%</div>
+                <div class="kpi-subtext">Objectif : 95%</div>
+            </div>
+            <div class="kpi-card" id="kpi-variance">
+                <div class="kpi-label">Écart</div>
+                <div class="kpi-value">0 €</div>
+                <div class="kpi-subtext">Réalisé - Prévisions</div>
+            </div>
+            <div class="kpi-card" id="kpi-turnover">
+                <div class="kpi-label">Rotation des Stocks</div>
+                <div class="kpi-value">0x</div>
+                <div class="kpi-subtext">Fois/période</div>
+            </div>
+            <div class="kpi-card" id="kpi-coverage">
+                <div class="kpi-label">Jours de Stock</div>
+                <div class="kpi-value">0</div>
+                <div class="kpi-subtext">Couverture de stock</div>
+            </div>
+            <div class="kpi-card" id="kpi-otd">
+                <div class="kpi-label">Livraison à Temps</div>
+                <div class="kpi-value">0%</div>
+                <div class="kpi-subtext">Objectif : 98%</div>
+            </div>
+            <div class="kpi-card" id="kpi-stockouts">
+                <div class="kpi-label">Ruptures de Stock</div>
+                <div class="kpi-value">0</div>
+                <div class="kpi-subtext">Événements sur la période</div>
+            </div>
+            <div class="kpi-card" id="kpi-returns">
+                <div class="kpi-label">Taux de Retours</div>
+                <div class="kpi-value">0%</div>
+                <div class="kpi-subtext">Des ventes totales</div>
+            </div>
+            <div class="kpi-card" id="kpi-logistics">
+                <div class="kpi-label">Coût Logistique</div>
+                <div class="kpi-value">0 €</div>
+                <div class="kpi-subtext">Coût total période</div>
+            </div>
+        </section>
+
+        <!-- GRAPHIQUES -->
+        <section class="charts-grid" aria-label="Graphiques de performance">
+            <div class="chart-card full-width">
+                <h3 class="chart-title">Prévisions vs Ventes Réelles dans le Temps</h3>
+                <div class="chart-container">
+                    <canvas id="salesChart"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #3b82f6;"></span>
+                        Prévisions
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background: #10b981;"></span>
+                        Réalisé
+                    </div>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3 class="chart-title">Écart par Catégorie de Produit</h3>
+                <div class="chart-container">
+                    <canvas id="varianceChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <h3 class="chart-title">Performance Livraison à Temps par Fournisseur</h3>
+                <div class="chart-container">
+                    <canvas id="supplierChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card full-width">
+                <h3 class="chart-title">Évolution des Coûts Logistiques</h3>
+                <div class="chart-container">
+                    <canvas id="logisticsChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- PANNEAU D'ANALYSES -->
+        <section class="insights-panel" aria-label="Analyses des causes">
+            <h2 class="insights-title">Analyses des Causes Racines</h2>
+            <div class="insights-grid" id="insightsContainer">
+                <!-- Les analyses seront insérées dynamiquement -->
+            </div>
+        </section>
+
+        <!-- TABLEAU DE DONNÉES -->
+        <section class="table-section">
+            <h3 class="table-title">Top 5 Catégories par Écart Négatif</h3>
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Catégorie</th>
+                        <th>Prévisions</th>
+                        <th>Réalisé</th>
+                        <th>Écart</th>
+                        <th>Écart %</th>
+                        <th>Ruptures</th>
+                        <th>À Temps %</th>
+                    </tr>
+                </thead>
+                <tbody id="varianceTableBody">
+                    <!-- Les données seront insérées dynamiquement -->
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>
