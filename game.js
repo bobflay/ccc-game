@@ -15,6 +15,7 @@
    ============================================ */
 
 import * as THREE from 'three';
+import { Models, loadAllModels, makeCharacter, makeTruckModel } from './models.js';
 
 /* ---------- Constantes ---------- */
 const OFFICIAL_PRICE   = 1800;  // FCFA / kg — prix bord-champ officiel (paramétrable)
@@ -35,6 +36,12 @@ const PAD_RADIUS       = 1.3;   // rayon de déclenchement d'une dalle d'action
 const PAD_EXIT_RADIUS  = 2.0;   // il faut sortir de ce rayon pour réarmer la dalle
 const BORNE_RADIUS     = 2.8;   // rayon de capture d'une borne (géoloc)
 const PLAYER_SPEED     = 6.5;
+
+// Embauche de main-d'œuvre (payée sur la Carte du Producteur)
+const RECRUIT_HARVEST_COST    = 2_000_000; // FCFA par récolteur
+const RECRUIT_LOAD_COST       = 1_000_000; // FCFA par chargeur
+const WORKER_HARVEST_INTERVAL = 3.0;       // s : un récolteur livre un sac au dépôt
+const WORKER_LOAD_INTERVAL    = 0.7;       // s : un chargeur charge un sac
 
 const ZONES = ['DALOA', 'SAN-PÉDRO', 'SOUBRÉ', 'ABENGOUROU', 'GAGNOA',
     'DIVO', 'ABOISSO', 'DUÉKOUÉ', 'MÉAGUI', 'BONGOUANOU', 'AGBOVILLE', 'ISSIA', 'MAN'];
@@ -57,6 +64,8 @@ const state = {
     shippedSacks: 0,       // sacs expédiés par camion (solde coopérative)
     firstSaleDone: false,
     busy: false,           // séquence de vente en cours
+    harvesters: 0,         // récolteurs embauchés (auto : arbres → dépôt)
+    loaders: 0,            // chargeurs embauchés (auto : dépôt → camion)
 };
 
 /* ---------- Scène ---------- */
@@ -136,6 +145,12 @@ scene.add(dirt);
 /* ---------- Cacaoyers ---------- */
 const cacaoTrees = [];
 const podColors = [0xd97706, 0xb91c1c, 0xf59e0b];
+// Couleurs vives des cabosses (jaune, rouge, vert) pour le modèle 3D de fève,
+// bien distinctes du tronc brun. Déclaré tôt : makeCacaoTree l'utilise au chargement.
+// Matériau non éclairé (Basic) : les cabosses gardent leur couleur vive quelle
+// que soit l'ombre du feuillage — sinon elles paraissent noires comme le tronc.
+const podMats = [0xf59e0b, 0xdc2626, 0x84cc16].map((c) =>
+    new THREE.MeshBasicMaterial({ color: c }));
 
 function makeCacaoTree(x, z) {
     const tree = new THREE.Group();
@@ -151,14 +166,19 @@ function makeCacaoTree(x, z) {
             leaf.position.set(px, py, pz); leaf.castShadow = true; tree.add(leaf);
         });
     const pods = [];
-    for (let i = 0; i < 4; i++) {
-        const angle = (i / 4) * Math.PI * 2;
+    const POD_COUNT = 12;
+    for (let i = 0; i < POD_COUNT; i++) {
+        // Spirale à angle d'or : les cabosses couvrent tous les côtés du tronc
+        const angle = i * 2.399963; // ~137.5° (golden angle)
+        const t = i / (POD_COUNT - 1);
+        const radius = 0.42 + (i % 2) * 0.12;
         const pod = new THREE.Mesh(
             new THREE.SphereGeometry(0.32, 8, 8),
             new THREE.MeshStandardMaterial({ color: podColors[i % 3], roughness: 0.7 }));
         pod.scale.set(0.7, 1.3, 0.7);
-        pod.position.set(Math.cos(angle) * 0.5, 1.2 + i * 0.35, Math.sin(angle) * 0.5);
+        pod.position.set(Math.cos(angle) * radius, 0.9 + t * 1.9, Math.sin(angle) * radius);
         pod.castShadow = true; tree.add(pod);
+        propSwap(pod, 'bean', 0.8, podMats[i % 3]);   // modèle 3D coloré si déjà chargé
         pods.push({ mesh: pod, ripe: true, regrowAt: 0 });
     }
     scene.add(tree);
@@ -221,6 +241,9 @@ function makeSign(text, color) {
         new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide }));
 }
 
+// Les panneaux sont fixés aux murs (orientation fixe) : quand on tourne la
+// caméra, ils restent collés au bâtiment au lieu de pivoter vers l'écran.
+
 /* ---------- Stations ---------- */
 const stations = [];
 
@@ -251,7 +274,7 @@ function makeCccDesk(x, z) {
         new THREE.MeshStandardMaterial({ color: 0x111827 }));
     roof.position.y = 3.2; roof.castShadow = true; g.add(roof);
     const sign = makeSign('Guichet CCC', '#c2410c');
-    sign.position.set(0, 2.2, 1.55); g.add(sign);
+    sign.position.set(0, 2.1, 1.53); g.add(sign);   // collé au mur avant (+z)
     const padPos = makePad(g, 0, 3.2, 0xf97316);
     scene.add(g);
     stations.push({ type: 'ccc', group: g, position: g.position, padPos, padArmed: true });
@@ -280,13 +303,14 @@ function makeCoop(x, z) {
         sack.position.set(sx, 0.5, sz); sack.castShadow = true; g.add(sack);
     });
     const sign = makeSign('Coopérative', '#1e3a8a');
-    sign.position.set(0, 2.6, 1.8); g.add(sign);
+    sign.position.set(0, 2.0, 1.78); g.add(sign);        // mur avant (+z)
+    // Panneaux des comptoirs, collés aux murs ouest (achat) et est (quai)
     const signAchat = makeSign('Achat\nCacao', '#166534');
-    signAchat.rotation.y = -Math.PI / 2;          // face ouest
-    signAchat.position.set(-2.3, 2.4, 0); g.add(signAchat);
+    signAchat.rotation.y = -Math.PI / 2;                 // face ouest (-x)
+    signAchat.position.set(-2.28, 1.7, 0); g.add(signAchat);
     const signQuai = makeSign('Quai\nExpédition', '#0e7490');
-    signQuai.rotation.y = Math.PI / 2;            // face est, vers la route
-    signQuai.position.set(2.3, 2.4, 0); g.add(signQuai);
+    signQuai.rotation.y = Math.PI / 2;                   // face est (+x)
+    signQuai.position.set(2.28, 1.7, 0); g.add(signQuai);
     const padPos = makePad(g, -4.6, 0, 0x1e3a8a);
     scene.add(g);
     stations.push({ type: 'coop', group: g, position: g.position, padPos, padArmed: true });
@@ -306,15 +330,33 @@ function makePushPos(x, z) {
         new THREE.MeshStandardMaterial({ color: 0x0ea5e9, emissive: 0x0ea5e9, emissiveIntensity: 0.4 }));
     screen.position.set(0, 1.05, 1.34); g.add(screen);
     const sign = makeSign('PUSH POS', '#0a5c2e');
-    sign.position.set(0, 2.1, 1.38); g.add(sign);
+    sign.position.set(0, 1.9, 1.33); g.add(sign);   // collé au mur avant (+z)
     const padPos = makePad(g, 0, 3.0, 0x0f7a3d);
     scene.add(g);
     stations.push({ type: 'push', group: g, position: g.position, padPos, padArmed: true });
 }
 
-makeCccDesk(10, -4);
+makeCccDesk(-19, -20);    // coin nord-ouest, au nord de la parcelle
 makeCoop(9, 7);
-makePushPos(11.5, -12);   // décalé à l'ouest de la route des camions
+makePushPos(-18, 10);     // coin sud-ouest, loin de la Coopérative
+
+// Zone d'embauche : une simple dalle carrée sur le terrain. S'y placer
+// recrute un ouvrier (payé sur la Carte). Une étiquette flotte au-dessus.
+function makeHireDesk(x, z, type, label, padColor, signColor) {
+    const g = new THREE.Group(); g.position.set(x, 0, z);
+    const padPos = makePad(g, 0, 0, padColor);        // carré au sol
+    const pole = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, 0.05, 2.0, 6),
+        new THREE.MeshStandardMaterial({ color: 0x475569 }));
+    pole.position.y = 1.0; pole.castShadow = true; g.add(pole);
+    const sign = makeSign(label, signColor);
+    sign.rotation.y = Math.PI / 4;                    // orientation fixe, face à la vue par défaut
+    sign.position.set(0, 2.3, 0); g.add(sign);
+    scene.add(g);
+    stations.push({ type, group: g, position: g.position, padPos, padArmed: true });
+}
+makeHireDesk(-5, 5, 'hireHarvest', 'Embauche\nRécolteurs', 0x15803d, '#166534');  // près de la plantation
+makeHireDesk(6, 1, 'hireLoad', 'Embauche\nChargeurs', 0x0e7490, '#155e75');       // près du dépôt / quai
 
 /* ---------- Dépôt de la coopérative (sacs vendus, en attente d'expédition) ---------- */
 const depotGroup = new THREE.Group();
@@ -365,20 +407,22 @@ function makeTruck(startZ, cabColor) {
     const g = new THREE.Group();
     g.position.set(TRUCK_ROAD_X, 0, startZ);
     g.rotation.y = Math.PI;                       // roule vers le nord (-z), cabine en tête
+    // Carrosserie procédurale (masquée si le modèle 3D téléchargé se charge)
+    const body = new THREE.Group(); g.add(body);
     const chassis = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.3, 4.6),
         new THREE.MeshStandardMaterial({ color: 0x374151 }));
-    chassis.position.y = 0.75; chassis.castShadow = true; g.add(chassis);
+    chassis.position.y = 0.75; chassis.castShadow = true; body.add(chassis);
     const cab = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.3, 1.1),
         new THREE.MeshStandardMaterial({ color: cabColor, roughness: 0.6 }));
-    cab.position.set(0, 1.55, 1.75); cab.castShadow = true; g.add(cab);
+    cab.position.set(0, 1.55, 1.75); cab.castShadow = true; body.add(cab);
     const bed = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.18, 3.3),
         new THREE.MeshStandardMaterial({ color: 0x92400e, roughness: 0.9 }));
-    bed.position.set(0, 0.99, -0.75); bed.castShadow = true; g.add(bed);
+    bed.position.set(0, 0.99, -0.75); bed.castShadow = true; body.add(bed);
     const wheelMat = new THREE.MeshStandardMaterial({ color: 0x111827 });
     [[-1.05, 1.5], [1.05, 1.5], [-1.05, -1.6], [1.05, -1.6]].forEach(([wx, wz]) => {
         const w = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.3, 12), wheelMat);
         w.rotation.z = Math.PI / 2;
-        w.position.set(wx, 0.45, wz); w.castShadow = true; g.add(w);
+        w.position.set(wx, 0.45, wz); w.castShadow = true; body.add(w);
     });
     // 40 sacs empilés sur le plateau (2 × 4 par étage, 5 étages)
     const truckSackMat = new THREE.MeshStandardMaterial({ color: 0xcaa472, roughness: 1 });
@@ -393,7 +437,7 @@ function makeTruck(startZ, cabColor) {
         g.add(s); sackMeshes.push(s);
     }
     scene.add(g);
-    trucks.push({ group: g, sackMeshes, sacks: 0, state: 'queue' });
+    trucks.push({ group: g, body, sackMeshes, sacks: 0, state: 'queue' });
 }
 for (let i = 0; i < TRUCK_COUNT; i++)
     makeTruck(24 + i * TRUCK_GAP, truckCabColors[i % truckCabColors.length]);
@@ -464,6 +508,13 @@ function unlockField(i) {
 
 function fieldBuyAction(st) {
     const f = FIELDS[st.fieldIndex];
+    // Verrou : impossible d'acheter une parcelle sans main-d'œuvre embauchée.
+    if (state.harvesters + state.loaders === 0) {
+        showInfo('🧑‍🌾', 'Embauche d\'abord de la main-d\'œuvre',
+            "Tu ne peux pas agrandir ton exploitation sans équipe. Embauche au moins un " +
+            "récolteur ou un chargeur (zones « Embauche » sur le terrain) avant d'acheter une parcelle.");
+        return;
+    }
     if (state.cash <= 0) {
         showInfo('🏦', 'Parcelle à vendre',
             `Prix : ${formatFCFA(f.price)} (déposé : ${formatFCFA(f.fund)}). ` +
@@ -622,6 +673,23 @@ const keys = {};
 window.addEventListener('keydown', (e) => { keys[e.code] = true; });
 window.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
+// Manette de jeu (PS5 DualSense et autres) via l'API Gamepad, mapping « standard » :
+// axes 0/1 = stick gauche (déplacement), axes 2/3 = stick droit (caméra).
+const GP_DEADZONE = 0.18;
+window.addEventListener('gamepadconnected', () => floaty('🎮 Manette connectée', 0x22c55e));
+function pollGamepad() {
+    const pads = navigator.getGamepads ? navigator.getGamepads() : null;
+    if (!pads) return null;
+    let gp = null;
+    for (const p of pads) if (p && p.connected) { gp = p; break; }
+    if (!gp) return null;
+    const dz = (v) => (Math.abs(v || 0) < GP_DEADZONE ? 0 : v);
+    return {
+        moveX: dz(gp.axes[0]), moveY: dz(gp.axes[1]),
+        camX: dz(gp.axes[2]), camY: dz(gp.axes[3]),
+    };
+}
+
 const joystick = document.getElementById('joystick');
 const knob = document.getElementById('joystickKnob');
 let joyActive = false, joyId = null, joyCenter = { x: 0, y: 0 };
@@ -704,26 +772,61 @@ function updateAutoHarvest(dt) {
     harvestCooldown = HARVEST_COOLDOWN;
 }
 
-// Dalles d'action : déclenchement automatique quand le joueur se place
-// sur la dalle ; il faut en sortir pour la réarmer.
+// Types déclenchés par un clic sur un bouton (pas automatiquement)
+const MANUAL_TYPES = ['field', 'hireHarvest', 'hireLoad'];
+
+// Dalles d'action. Stations automatiques (CCC, Coopérative, PUSH POS) :
+// se placer dessus déclenche l'action. Stations manuelles (parcelle, embauche) :
+// se placer dessus affiche un bouton ; l'action n'a lieu qu'au clic.
 function updateActionPads() {
-    if (!state.started) return;
+    if (!state.started) { updateActionButton(null); return; }
+    let manual = null;
     for (const st of stations) {
         if (st.disabled) continue;    // parcelle achetée : dalle désactivée
         const d = Math.hypot(player.position.x - st.padPos.x, player.position.z - st.padPos.z);
+        if (MANUAL_TYPES.includes(st.type)) {
+            if (d < PAD_RADIUS && !state.busy) manual = st;
+            continue;
+        }
         if (st.padArmed) {
             if (d < PAD_RADIUS && !state.busy) {
                 st.padArmed = false;
                 if (st.type === 'ccc') cccAction();
                 else if (st.type === 'coop') tracedSale();
                 else if (st.type === 'push') pushCashOut();
-                else if (st.type === 'field') fieldBuyAction(st);
             }
         } else if (d > PAD_EXIT_RADIUS) {
             st.padArmed = true;
         }
     }
+    updateActionButton(manual);
 }
+
+// Affiche/masque le bouton contextuel selon la station manuelle sous le joueur.
+const actionBtnEl = document.getElementById('actionBtn');
+let actionBtnStation = null;
+function actionBtnLabel(st) {
+    if (st.type === 'hireHarvest') return `🧑‍🌾 Embaucher un récolteur\n${formatFCFA(RECRUIT_HARVEST_COST, false)} F`;
+    if (st.type === 'hireLoad') return `💪 Embaucher un chargeur\n${formatFCFA(RECRUIT_LOAD_COST, false)} F`;
+    const f = FIELDS[st.fieldIndex];
+    return `🏦 Acheter la parcelle\n${formatFCFA(f.fund, false)} / ${formatFCFA(f.price, false)} F`;
+}
+function updateActionButton(st) {
+    actionBtnStation = st;
+    if (!st) { actionBtnEl.classList.add('hidden'); return; }
+    actionBtnEl.textContent = actionBtnLabel(st);
+    actionBtnEl.classList.remove('hidden');
+}
+actionBtnEl.addEventListener('click', () => {
+    const st = actionBtnStation;
+    if (!st || state.busy) return;
+    if (st.type === 'hireHarvest') recruitHarvester();
+    else if (st.type === 'hireLoad') recruitLoader();
+    else if (st.type === 'field') fieldBuyAction(st);
+    // Rafraîchit le libellé (fonds déposés, etc.) si le joueur reste sur la dalle
+    if (actionBtnStation && !actionBtnStation.disabled) actionBtnEl.textContent = actionBtnLabel(actionBtnStation);
+    else updateActionButton(null);
+});
 
 /* ---------- Récolte ---------- */
 function harvestFrom(tree) {
@@ -967,12 +1070,12 @@ function showInfo(emoji, title, text) {
 }
 
 /* ---------- Texte flottant ---------- */
-function floaty(text, color = 0xffffff) {
+function floaty(text, color = 0xffffff, atPos = null) {
     const el = document.createElement('div');
     el.className = 'floaty'; el.textContent = text;
     el.style.color = '#' + color.toString(16).padStart(6, '0');
     document.getElementById('hud').appendChild(el);
-    const world = player.position.clone(); world.y += 2.4;
+    const world = (atPos || player.position).clone(); world.y += 2.4;
     const s = worldToScreen(world);
     el.style.left = s.x + 'px'; el.style.top = s.y + 'px';
     setTimeout(() => el.remove(), 1100);
@@ -982,6 +1085,275 @@ function worldToScreen(v3) {
     return { x: (v.x * 0.5 + 0.5) * window.innerWidth, y: (-v.y * 0.5 + 0.5) * window.innerHeight };
 }
 const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+/* ---------- Modèles 3D (amélioration progressive) ---------- */
+let playerChar = null;       // personnage animé du fermier, une fois chargé
+// Remplace la géométrie procédurale d'un accessoire (sac, cabosse) par le
+// modèle 3D partagé. Sans effet tant que les modèles ne sont pas chargés.
+function propSwap(mesh, propName, size, materialOverride) {
+    const prop = Models.prop && Models.prop[propName];
+    if (!prop) return;
+    mesh.geometry = prop.geometry;
+    mesh.material = materialOverride || prop.material;
+    mesh.rotation.set(0, 0, 0);
+    mesh.scale.setScalar(size);
+}
+function applyModels() {
+    // Fermier : masque le corps procédural, ajoute le personnage animé
+    [torso, head, hat, legL, legR].forEach((m) => { m.visible = false; });
+    playerChar = makeCharacter('farmer');
+    player.add(playerChar.holder);
+    // Camions : masque la carrosserie procédurale, ajoute le modèle 3D
+    for (const t of trucks) {
+        t.body.visible = false;
+        t.group.add(makeTruckModel());
+    }
+    // Accessoires : cabosses (fèves) colorées et sacs → modèles 3D téléchargés
+    for (const tree of cacaoTrees)
+        tree.pods.forEach((p, i) => propSwap(p.mesh, 'bean', 0.8, podMats[i % 3]));
+    for (const s of backSacks) propSwap(s, 'bag', 0.7);
+    for (const s of depotSacks) propSwap(s, 'bag', 0.7);
+    // Camions : sacs empilés visiblement sur le plateau ouvert du pickup
+    for (const t of trucks) layoutTruckSacks(t);
+}
+
+// Dispose les sacs de cacao en pile sur le plateau ouvert (arrière) du pickup.
+function layoutTruckSacks(t) {
+    const BAG = 0.4;                  // taille d'un sac
+    const floorY = 0.9;               // hauteur du plancher du plateau
+    t.sackMeshes.forEach((s, i) => {
+        propSwap(s, 'bag', BAG);
+        const layer = Math.floor(i / 8), idx = i % 8;
+        const row = Math.floor(idx / 2), col = idx % 2;   // 2 larg × 4 long
+        s.position.set(
+            (col - 0.5) * 0.48,
+            floorY + BAG * 0.5 + layer * BAG * 0.8,
+            -0.45 - row * 0.45,       // réparti vers l'arrière (plateau ouvert)
+        );
+    });
+}
+
+/* ---------- Ouvriers embauchés ---------- */
+const harvestWorkers = [];   // { mesh } → livrent des sacs au dépôt de la coopérative
+const loadWorkers = [];      // { mesh } → chargent le camion de tête depuis le dépôt
+
+// Petit personnage (mêmes proportions que le joueur, tenue distincte).
+// Si les modèles 3D sont chargés, on renvoie un personnage animé (GLB) ;
+// sinon on retombe sur la version procédurale (capsules).
+function makeWorker(shirtColor, hatColor, kind) {
+    if (Models.ready && kind) {
+        const char = makeCharacter(kind);
+        char.holder.userData = { char, timer: 0 };
+        return char.holder;
+    }
+    const g = new THREE.Group();
+    const skin = new THREE.MeshStandardMaterial({ color: 0x8d5524 });
+    const shirt = new THREE.MeshStandardMaterial({ color: shirtColor });
+    const pants = new THREE.MeshStandardMaterial({ color: 0x374151 });
+    const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.3, 0.5, 4, 8), shirt);
+    torso.position.y = 1.0; torso.castShadow = true; g.add(torso);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.27, 12, 12), skin);
+    head.position.y = 1.62; head.castShadow = true; g.add(head);
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.1, 12),
+        new THREE.MeshStandardMaterial({ color: hatColor }));
+    hat.position.y = 1.82; hat.castShadow = true; g.add(hat);
+    const legL = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.42, 4, 6), pants);
+    legL.position.set(-0.13, 0.42, 0); legL.castShadow = true; g.add(legL);
+    const legR = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.42, 4, 6), pants);
+    legR.position.set(0.13, 0.42, 0); legR.castShadow = true; g.add(legR);
+    g.userData = { torso, legL, legR, phase: Math.random() * 6.28, timer: 0 };
+    return g;
+}
+function animateWorker(g, dt, active) {
+    const u = g.userData;
+    if (u.char) {                       // personnage animé (GLB)
+        u.char.setMoving(active);
+        u.char.update(dt);
+        return;
+    }
+    if (active) {
+        u.phase += dt * 9;
+        u.legL.rotation.x = Math.sin(u.phase) * 0.5;
+        u.legR.rotation.x = -Math.sin(u.phase) * 0.5;
+        u.torso.position.y = 1.0 + Math.abs(Math.sin(u.phase)) * 0.05;
+    } else {
+        u.legL.rotation.x *= 0.85; u.legR.rotation.x *= 0.85;
+    }
+}
+
+// Crée les sacs (cachés) empilés sur le dos d'un récolteur ; ils apparaissent
+// au fur et à mesure de la récolte. Utilise le modèle 3D de sac si disponible.
+function makeWorkerBackSacks(holder) {
+    const arr = [];
+    for (let i = 0; i < WORKER_CARRY_SACKS; i++) {
+        let s;
+        if (Models.prop && Models.prop.bag) {
+            s = new THREE.Mesh(Models.prop.bag.geometry, Models.prop.bag.material);
+            s.scale.setScalar(0.42);
+        } else {
+            s = new THREE.Mesh(new THREE.CapsuleGeometry(0.16, 0.24, 4, 8), backSackMat);
+            s.rotation.z = Math.PI / 2;
+        }
+        s.position.set(0, 1.0 + i * 0.32, -0.34);   // sur le dos (modèle face +Z)
+        s.castShadow = true; s.visible = false;
+        holder.add(s); arr.push(s);
+    }
+    return arr;
+}
+
+function recruitHarvester() {
+    if (state.cardBalance < RECRUIT_HARVEST_COST) {
+        floaty(`💳 Solde Carte insuffisant`, 0xdc2626);
+        showInfo('🧑‍🌾', 'Embauche : récolteurs',
+            `Un récolteur coûte ${formatFCFA(RECRUIT_HARVEST_COST)}, payé sur la Carte du Producteur. ` +
+            "Chaque récolteur récolte le cacao tout seul et le vend à la coopérative : " +
+            "l'argent tombe automatiquement sur ton compte (Carte), et les sacs partent au dépôt pour l'expédition.");
+        return;
+    }
+    state.cardBalance -= RECRUIT_HARVEST_COST;
+    const w = makeWorker(0x16a34a, 0xca8a04, 'harvest');
+    const tree = cacaoTrees[state.harvesters % cacaoTrees.length];
+    w.position.set(tree.position.x + 1.4, 0, tree.position.z + 0.6);
+    w.rotation.y = -Math.PI / 2;
+    scene.add(w);
+    const backSacks = makeWorkerBackSacks(w);
+    harvestWorkers.push({ mesh: w, tree, state: 'toTree', carriedKg: 0, sacks: 0, harvestTimer: 0, backSacks });
+    state.harvesters++;
+    updateHUD();
+    floaty(`🧑‍🌾 Récolteur embauché (${state.harvesters})`, 0x16a34a);
+}
+function recruitLoader() {
+    if (state.cardBalance < RECRUIT_LOAD_COST) {
+        floaty(`💳 Solde Carte insuffisant`, 0xdc2626);
+        showInfo('💪', 'Embauche : chargeurs',
+            `Un chargeur coûte ${formatFCFA(RECRUIT_LOAD_COST)}, payé sur la Carte du Producteur. ` +
+            "Chaque chargeur charge automatiquement le camion à quai depuis le dépôt.");
+        return;
+    }
+    state.cardBalance -= RECRUIT_LOAD_COST;
+    const w = makeWorker(0x0891b2, 0xf59e0b, 'loader');
+    const i = state.loaders;
+    w.position.set(12.4 - (i % 3) * 0.8, 0, LOAD_Z - 1.6 - Math.floor(i / 3) * 0.8);
+    w.rotation.y = Math.PI / 2;
+    scene.add(w);
+    loadWorkers.push({ mesh: w, state: 'toDepot', carry: 0 });
+    state.loaders++;
+    updateHUD();
+    floaty(`💪 Chargeur embauché (${state.loaders})`, 0x0891b2);
+}
+
+// Déplacement des ouvriers
+const WORKER_SPEED = 4.0;          // u/s
+const WORKER_CARRY_SACKS = 3;      // sacs récoltés (arbres visités) avant d'aller vendre
+const WORKER_PICK_TIME = 1.2;      // s de récolte sur un arbre avant de passer au suivant
+
+// Choisit un arbre au hasard, différent de l'arbre courant.
+function pickTree(current) {
+    if (cacaoTrees.length <= 1) return cacaoTrees[0];
+    let t;
+    do { t = cacaoTrees[Math.floor(Math.random() * cacaoTrees.length)]; } while (t === current);
+    return t;
+}
+// Affiche sur le dos du récolteur autant de sacs qu'il en porte.
+function updateWorkerSacks(hw) {
+    if (hw.backSacks) hw.backSacks.forEach((s, i) => { s.visible = i < hw.sacks; });
+}
+// Lieux de destination
+const SELL_POS = (() => { const s = stations.find((st) => st.type === 'coop'); return s ? s.padPos : new THREE.Vector3(4.4, 0, 7); })();
+const DEPOT_POS = depotGroup.position;   // Vector3 (dépôt de sacs)
+const TRUCK_POS = LOAD_PAD_POS;          // Vector3 (quai de chargement)
+
+// Avance le personnage vers (tx,tz). Le fait pivoter vers sa direction.
+// Renvoie true une fois arrivé.
+function stepToward(m, tx, tz, dt) {
+    const dx = tx - m.position.x, dz = tz - m.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d < 0.25) return true;
+    const s = Math.min(d, WORKER_SPEED * dt);
+    m.position.x += (dx / d) * s;
+    m.position.z += (dz / d) * s;
+    m.rotation.y = Math.atan2(dx, dz);       // modèle orienté +Z → face au déplacement
+    return false;
+}
+
+// Récolteur : va d'arbre en arbre, récolte jusqu'à être « plein », puis marche
+// jusqu'à la coopérative pour vendre (argent → compte, sacs → dépôt), et repart.
+function updateHarvestWorker(hw, dt) {
+    const m = hw.mesh;
+    if (hw.state === 'toTree') {
+        const t = hw.tree.position;
+        const arrived = stepToward(m, t.x + 1.2, t.z + 0.6, dt);
+        animateWorker(m, dt, !arrived);
+        if (arrived) { hw.state = 'harvest'; hw.harvestTimer = 0; }
+    } else if (hw.state === 'harvest') {
+        animateWorker(m, dt, false);
+        hw.harvestTimer += dt;
+        if (hw.harvestTimer >= WORKER_PICK_TIME) {
+            hw.harvestTimer = 0;
+            const pod = hw.tree.pods.find((p) => p.ripe);
+            if (pod) { pod.ripe = false; pod.mesh.visible = false; pod.regrowAt = clockTime + 6; }
+            const kg = Math.round(HARVEST_MIN_KG + Math.random() * (HARVEST_MAX_KG - HARVEST_MIN_KG));
+            hw.carriedKg += kg;
+            hw.sacks += 1;                    // un sac par arbre récolté
+            updateWorkerSacks(hw);            // sacs visibles sur le dos
+            floaty(`+${kg}kg 🍫`, 0x7b3f00, m.position);
+            if (hw.sacks >= WORKER_CARRY_SACKS) hw.state = 'toCoop';
+            else { hw.tree = pickTree(hw.tree); hw.state = 'toTree'; }   // passe à l'arbre suivant
+        }
+    } else { // toCoop
+        const arrived = stepToward(m, SELL_POS.x, SELL_POS.z, dt);
+        animateWorker(m, dt, !arrived);
+        if (arrived) {
+            const amount = hw.carriedKg * OFFICIAL_PRICE;
+            state.cardBalance += amount;      // argent sur le compte (Carte)
+            state.coopSacks += hw.sacks;      // sacs vendus au dépôt
+            addScore(2);
+            updateDepotPile(); updateHUD();
+            floaty(`+${formatFCFA(amount, false)} F 💳`, 0x16a34a, m.position);
+            hw.carriedKg = 0; hw.sacks = 0;
+            updateWorkerSacks(hw);            // dos vidé après la vente
+            hw.tree = pickTree(hw.tree);      // nouvel arbre
+            hw.state = 'toTree';
+        }
+    }
+}
+
+// Chargeur : fait la navette dépôt ↔ camion en portant un sac à chaque voyage.
+function updateLoadWorker(lw, dt) {
+    const m = lw.mesh;
+    const front = truckQueue()[0];
+    const atDock = front && front.group.position.z <= LOAD_Z + 0.05;
+    if (lw.state === 'toDepot') {
+        const arrived = stepToward(m, DEPOT_POS.x, DEPOT_POS.z, dt);
+        animateWorker(m, dt, !arrived);
+        if (arrived && state.coopSacks > 0 && atDock && front.sacks < TRUCK_CAPACITY) {
+            state.coopSacks--; lw.carry = 1;      // prend un sac au dépôt
+            updateDepotPile(); updateHUD();
+            lw.state = 'toTruck';
+        }
+    } else { // toTruck
+        const arrived = stepToward(m, TRUCK_POS.x, TRUCK_POS.z, dt);
+        animateWorker(m, dt, !arrived);
+        if (arrived && lw.carry && front && atDock && front.sacks < TRUCK_CAPACITY) {
+            front.sacks++; lw.carry = 0;          // dépose le sac sur le camion
+            updateTruckLoad(front); updateHUD();
+            if (front.sacks >= TRUCK_CAPACITY) {
+                state.shippedSacks += TRUCK_CAPACITY; addScore(10); updateHUD();
+                floaty('🚚 Camion complet — il passe son chemin !', 0x16a34a, m.position);
+                front.state = 'departing';
+            }
+            lw.state = 'toDepot';
+        } else if (arrived && !lw.carry) {
+            lw.state = 'toDepot';
+        }
+    }
+}
+
+function updateWorkers(dt) {
+    if (!state.started) return;
+    for (const hw of harvestWorkers) updateHarvestWorker(hw, dt);
+    for (const lw of loadWorkers) updateLoadWorker(lw, dt);
+}
 
 /* ---------- Boucle ---------- */
 const clock = new THREE.Clock();
@@ -997,6 +1369,13 @@ function animate() {
     if (keys['KeyS'] || keys['ArrowDown']) my += 1;
     if (keys['KeyA'] || keys['ArrowLeft']) mx -= 1;
     if (keys['KeyD'] || keys['ArrowRight']) mx += 1;
+    // Manette PS5 (DualSense) : stick gauche = déplacement, stick droit = caméra
+    const gp = pollGamepad();
+    if (gp) {
+        mx += gp.moveX; my += gp.moveY;
+        camAzimuth -= gp.camX * 2.4 * dt;
+        camHeight = THREE.MathUtils.clamp(camHeight + gp.camY * 18 * dt, 12, 34);
+    }
 
     // Déplacement relatif à la caméra : « haut » à l'écran éloigne de la caméra
     const fx = -Math.sin(camAzimuth), fz = -Math.cos(camAzimuth); // avant
@@ -1016,6 +1395,11 @@ function animate() {
         torso.position.y = 1.1 + Math.abs(Math.sin(walkPhase)) * 0.05;
     } else {
         legL.rotation.x *= 0.8; legR.rotation.x *= 0.8;
+    }
+    // Personnage animé du fermier (marche / repos selon le déplacement)
+    if (playerChar) {
+        playerChar.setMoving(len > 0.05 && canMove);
+        playerChar.update(dt);
     }
 
     // Capture des bornes (géolocalisation) par proximité
@@ -1047,6 +1431,7 @@ function animate() {
     updateAutoHarvest(dt);
     updateActionPads();
     updateTrucks(dt);
+    updateWorkers(dt);
     renderer.render(scene, camera);
 }
 animate();
@@ -1060,8 +1445,28 @@ document.getElementById('startBtn').addEventListener('click', () => {
 });
 updateHUD(); updateObjective(); updateDepotPile();
 
+// Chargement asynchrone des modèles 3D téléchargés ; le jeu tourne déjà
+// avec les formes procédurales et se met à niveau dès que c'est prêt.
+loadAllModels()
+    .then(applyModels)
+    .catch((e) => console.warn('Modèles 3D indisponibles, rendu procédural conservé :', e));
+
 /* ---------- Hooks de test (inoffensifs) ---------- */
+// Démarrage automatique pour captures/essais : #auto dans l'URL
+if (location.hash.includes('auto')) {
+    state.started = true;
+    startScreen.classList.add('hidden');
+    state.cardBalance = 10_000_000;   // de quoi tester l'embauche
+    updateHUD(); updateObjective();
+}
 window.__dbgTeleport = (x, z) => { player.position.set(x, 0, z); };
+window.__dbgRecruit = (kind) => (kind === 'load' ? recruitLoader() : recruitHarvester());
+window.__dbgLoadTruck = (n) => { const t = truckQueue()[0]; if (t) { t.sacks = n || TRUCK_CAPACITY; updateTruckLoad(t); } };
+window.__dbgWorkers = () => ({
+    h: harvestWorkers.map((w) => ({ s: w.state, x: +w.mesh.position.x.toFixed(1), z: +w.mesh.position.z.toFixed(1), sacks: w.sacks, vis: w.backSacks ? w.backSacks.filter((s) => s.visible).length : 0 })),
+    l: loadWorkers.map((w) => ({ s: w.state, x: +w.mesh.position.x.toFixed(1), z: +w.mesh.position.z.toFixed(1), carry: w.carry })),
+});
+window.__dbgPod = () => { const p = cacaoTrees[0].pods[0].mesh; return { matType: p.material.type, color: p.material.color.getHexString(), emissive: p.material.emissive ? p.material.emissive.getHexString() : 'none', ei: p.material.emissiveIntensity, y: +p.position.y.toFixed(2), scale: +p.scale.x.toFixed(2), visible: p.visible, hasBeanGeo: p.geometry === (Models.prop.bean && Models.prop.bean.geometry) }; };
 window.__dbg = () => ({
     player: [player.position.x.toFixed(1), player.position.z.toFixed(1)],
     camAzimuth: +camAzimuth.toFixed(2), camHeight: +camHeight.toFixed(1),
