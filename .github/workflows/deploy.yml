@@ -7,9 +7,7 @@ on:
   push:
     branches:
       - main
-      # Allows deploying from this working branch before it's merged.
-      # Safe to remove once everything lives on main.
-      - claude/repo-contents-overview-lwbe1p
+  # Lets you trigger a deploy by hand from the Actions tab.
   workflow_dispatch:
 
 # Permissions required by the GitHub Pages deploy actions.
@@ -31,13 +29,30 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # enablement: true turns on Pages (source = GitHub Actions) via the API
+      # on the first run, so the deploy step doesn't fail with
+      # "Deployment failed, try again later" when Pages was never enabled.
       - name: Configure Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      # Assemble a clean site folder (drop VCS history and CI/dev-only files
+      # so they aren't published to the public Pages URL).
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          rsync -a \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude='_site' \
+            --exclude='deploy.sh' \
+            ./ _site/
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: "."
+          path: "_site"
 
   # 2) Deploy: publish the artifact produced by the build job.
   deploy:
